@@ -14,3 +14,13 @@ function beanstream_pay_pay_method_handler_info() {
     ),
   );
 }
+/**
+ * Helper function to return all available currencies for beanstream_pay.
+ */
+function beanstream_pay_currencies() {
+  return array(
+
+    'CAD', // Canadian Dollar.
+
+  );
+}

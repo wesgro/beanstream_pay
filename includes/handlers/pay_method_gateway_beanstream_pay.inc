@@ -1,129 +1,120 @@
 <?php
-
 /**
  * @file
  */
 
+
 class pay_method_gateway_beanstream_pay extends pay_method_gateway {
   var $beanstream_pay_api_id = '';
+  var $beanstream_pay_test_id = '';
   var $beanstream_pay_password = '';
+  var $beanstream_pay_user = '';
   var $beanstream_pay_email_customer = 0;
   var $beanstream_pay_email_merchant = 1;
   var $beanstream_pay_developer = 0;
 
-  var $gateway_supports_ach = TRUE;
+  var $gateway_supports_ach = false;
   var $gateway_supports_cc = TRUE;
-  var $gateway_supports_recurring = TRUE;
+  var $gateway_supports_recurring = false;
 
-  var $beanstream_pay_payment_type = 'payment'; // Payment/Periodic
+  /**
+   * A list of all currencies supported by beanstream_pay.
+   */
+  function available_currencies() {
+    return beanstream_pay_currencies();
+  }
 
-  // this variable could be replaced when currency support in included in pay
-  // http://drupal.org/node/932666
-  var $currency = 'CAD';
+  function payment_types($filter = NULL) {
+    $payment_types = parent::payment_types($filter);
+  
+
+    if ($filter) {
+      foreach ($payment_types as $key => $label) {
+        if (!$filter[$key]) unset($payment_types[$key]);
+      }
+    }
+
+    return $payment_types;
+  }
 
   function gateway_url() {
-    $url = 'https://api.Beanstream/xmlapi/'. $this->beanstream_pay_payment_type;
-    if ($this->beanstream_pay_developer) {
-      $url = 'https://test.Beanstream/xmlapi/'. $this->beanstream_pay_payment_type;
-    }
+    $url = 'https://www.beanstream.com/scripts/process_transaction.asp';
     return $url;
   }
-
-  /**
-   * Create request to be POST to the gateway.
-   */
+  
   function gateway_request() {
-    // create a unique id for the message
-    $message_id    = md5($this->beanstream_pay_api_id . time());
-    $timeout       = 60;
-    $timestamp     = date('YmdHis000+600');
-
-    $api_version   = 'xml-4.2';
-    if ($this->beanstream_pay_payment_type != 'payment') {
-      $api_version   = 'spxml-3.0'; // Periodic
-    }
-    $merchant_info = array(
-      'MessageInfo' => array(
-        'messageID' => $message_id,
-        'messageTimestamp' => $timestamp,
-        'timeoutValue' => $timeout,
-        'apiVersion' => $api_version
-      ),
-      'MerchantInfo' => array(
-        'merchantID' => $this->beanstream_pay_api_id,
-        'password' => $this->beanstream_pay_password,
-      ),
-      'RequestType' => ($this->beanstream_pay_payment_type == 'payment') ? 'Payment' : 'Periodic',
-    );
-   
-    $data = array_merge($merchant_info, $this->gateway_request_values());
-
+  	
+  	// watchdog('payment', "Activity returned was '@err'", array('@err' => print_r($this->beanstream_pay_trxtype($this->activity->activity), true)));
     // Set the transaction type based on requested activity.
-    if (!$txntype = $this->beanstream_pay_trxtype($this->activity->activity)) {
+    if (!$txntype = $this->beanstream_pay_trxtype($this->activity->action)) {
       drupal_set_message("Payment activity '$this->activity->activity' is unsupported. Not processing transaction", 'error');
-      return FALSE;
+      return false;
     }
 
-    $xml = $this->arrayToXml($data, 'SecurePayMessage');
-    return $xml;
+    $req = '';
+    foreach ($this->gateway_request_values($txntype) as $key => $val) {
+      if ($val = trim($val)) $req .= check_plain($key) .'='. urlencode($val) .'&';
+    }
+   //	krumo($req); 
+    
+    return $req;
   }
- 
-  /**
-   *
-   */
-  function gateway_response($result) {
-    $xml = simplexml_load_string($result->data);
-
-    dsm($xml);
-
-    // error connecting/communicating to gateway.
-    if ($xml->Status->statusCode != '000') {
-      watchdog('payment', "Error processing payment: Beanstream gateway returned '@err'", array('@err' => (string)$xml->Status->statusDescription));
-      drupal_set_message("Error processing payment, contact site administration.");
-      return FALSE;
-    }
-
-    $transaction = $xml->Payment->TxnList->Txn;
-
-    // Save the transaction ID for tracking and/or future operations.
-    $this->activity->identifier = (string)$transaction->txnID;
-
-    if ((string)$transaction->approved != 'Yes') {
-      watchdog('payment', "Error processing payment: Beanstream gateway returned '@err'", array('@err' => (string)$transaction->responseText));
-      drupal_set_message("Error processing payment, please check your card details and try again.");
-      return FALSE;
-    }
-
-    return TRUE;
-  }
-
-  /**
-   * Process a payment.
-   */
-  function execute($activity) {
-    $this->activity = $activity;
+  
+  function execute() {
     if ($request = $this->gateway_request()) {
-      $response = drupal_http_request($this->gateway_url(), $this->gateway_headers(), 'POST', $request);
-      if ($response->error) {
-        watchdog('payment', "Gateway Error: @err Payment NOT processed.", array('@err' => $ret->error));
-        $this->activity->data = (array) $ret;
-        return FALSE;
-      }
-      else {
-        return $this->gateway_response($response);
-      }
+     	$ch = curl_init();
+		curl_setopt($ch, CURLOPT_URL,$this->gateway_url());
+		curl_setopt($ch, CURLOPT_RETURNTRANSFER,1);
+		curl_setopt ($ch, CURLOPT_SSL_VERIFYHOST, 0);
+		curl_setopt ($ch, CURLOPT_SSL_VERIFYPEER, 0);
+		curl_setopt ($ch, CURLOPT_POST, 1);
+		curl_setopt( $ch, CURLOPT_POSTFIELDS, $this->gateway_request() ); 
+
+		$response = curl_exec($ch); 
+
+        if (curl_getinfo($ch, CURLINFO_HTTP_CODE) != 200) {
+          watchdog('payment', "Gateway Error: @err Payment NOT processed. Response was @resp", array('@err' => curl_getinfo($ch, CURLINFO_HTTP_CODE), '@resp' =>print_r($this->http_query_to_array($response),true)));
+          $ret = $this->http_query_to_array($response);
+          $this->activity->data = (array) $ret;
+          $this->activity->result = FALSE;
+        }
+        else {
+          $this->activity->result = $this->gateway_response($response);
+        }
+	    //close the curl handle
+	    curl_close($ch);
+        // Return TRUE or FALSE on success/failure.
+       // krumo( ($this->activity->result == true));
+        
+        return ($this->activity->result == true);
     }
   }
+  
+  function gateway_response($result = NULL) {
+  	//krumo($result);
+  	
+    
+    $r = $this->http_query_to_array($result);
+    // Save the transaction ID for tracking and/or future operations.
+    $this->activity->identifier = $r['trnId'];
+    // TODO: need to figure this out
 
-  /**
-   * @return
-   *   Array of HTTP headers in key => value pairs.
-   */
-  function gateway_headers() {
-    return array('Content-Type' => 'text/xml');
+    $response_code = $r['trnApproved'];
+
+    $this->activity->data = array(
+      'response_string' => $r['messageText'],
+      'approval_code'   => $r['authCode'],
+      'transaction_total' => $r['trnAmount'],
+    );
+    if ($response_code <> '1') {
+      watchdog('payment', "Error processing payment: beanstream_pay gateway returned '@err'", array('@err' => $this->activity->data['response_string']));
+      drupal_set_message("Error processing payment: beanstream_pay gateway returned '". $this->activity->data['response_string']. "'", 'error');
+    }
+
+    return ($response_code == '1');
   }
 
-  function settings_form(&$form, &$form_state) {
+   function settings_form(&$form, &$form_state) {
     parent::settings_form($form, $form_state);
     $group = $this->handler();
 
@@ -145,6 +136,13 @@ class pay_method_gateway_beanstream_pay extends pay_method_gateway {
       '#default_value' => $this->beanstream_pay_test_id,
       '#required' => TRUE,
       '#parents' => array($group, 'beanstream_pay_test_id'),
+    );
+    $form[$group]['an']['beanstream_pay_user'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Beanstream User'),
+      '#default_value' => $this->beanstream_pay_user,
+      '#required' => TRUE,
+      '#parents' => array($group, 'beanstream_pay_user'),
     );
     $form[$group]['an']['beanstream_pay_password'] = array(
       '#type' => 'textfield',
@@ -174,95 +172,65 @@ class pay_method_gateway_beanstream_pay extends pay_method_gateway {
     );
   }
 
+
   function beanstream_pay_trxtype($activity) {
-    // S:Sale C:Credit A:Auth D:Delayed V:Void F:Voice I:Inquiry N:Duplicate    
     $trxtypes = array(
-      'complete'  => 'AUTH_CAPTURE',
-      //'authorize' => 'AUTH_ONLY',
-      //'capture'   => 'CAPTURE_ONLY',
-      //'void'      => 'VOID',
-      //'credit'    => 'CREDIT',
+      'complete'  => 'Sale',
+      'authorize' => 'Authorization',
     );
     return $trxtypes[$activity];
   }
 
   // TODO
-  function gateway_request_values() {
+  function gateway_request_values($txntype) {
     $data = array(
-      'Payment' => array(
-        'TxnList' => array(
-          '_a' => array('count' => '1'),
-          '_c' => array(
-            'Txn' => array(
-              '_a' => array('ID' => '1'), 
-              '_c' => array(
-                'txnType' => '0',  // 0 = Standard Payment
-                'txnSource' => '23',  // 23 = XML
-                'amount' => (int)($this->total()*100), // amount takes a value in cents
-                'currency' => $this->currency,
-                'purchaseOrderNo' => 'test',
-                'CreditCardInfo' => array(
-                  'cardNumber' => $this->cc_number,
-                  'expiryDate' => $this->cc_exp_month .'/'. $this->cc_exp_year,
-                  'ccv'        => $this->cc_ccv2,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+      'requestType'           => 'BACKEND',
+      'trnType'               => 'P',
+      'trnComments'           => $this->note,
+      'username'              => $this->beanstream_pay_user,
+      'password'              => $this->beanstream_pay_password,
+      'merchant_id'           => $this->beanstream_pay_api_id,
+      'trnAmount'             => $this->total(),
+      'trnCardNumber'         => $this->cc_number,
+      'trnExpMonth'           => $this->cc_exp_month,
+      'trnExpYear'            => $this->cc_exp_year,
+      'trnCardCvd'            => $this->cc_ccv2,
+      'ordName'               => $this->first_name .' '.$this->last_name,
+      'trnCardOwner'          => $this->first_name .' '.$this->last_name,
+      'ordAddress1'           => $this->billto['street1'],
+      'ordCity'               => $this->billto['city'],
+      'ordProvince'           => $this->billto['state'],
+      'ordPostalCode'         => $this->billto['zip'],
+      'ordCountry'            => 'ca',
+      'ordPhoneNumber'        => $this->billto['phone'],
+      'ordEmailAddress'       => $this->mail,
     );
+    
+
+    if ($this->gateway_testmode) {
+    	$data['trnCardNumber']       = '5100000010001004';
+    	$data['trnCardCvd']          = '123';
+    	$data['merchant_id']         = $this->beanstream_pay_test_id;
+    	$data['ordAddress1']         = '123 test st';
+      	$data['ordCity']             = 'victoria';
+      	$data['ordProvince']         =	'bc';
+      	$data['ordPostalCode']       = 'v5v4g4';
+      	$data['ordCountry']          = 'ca';
+      	$data['ordPhoneNumber']      = '555-555-5555';
+    }
 
     return $data;
   }
-
-  /**
-   * The main function for converting to an XML document.
-   * Pass in a multi dimensional array and this recrusively loops through and builds up an XML document.
-   *
-   * @param array $data
-   * @param string $rootNodeName - what you want the root node to be - defaultsto data.
-   * @param SimpleXMLElement $xml - should only be used recursively
-   * @return string XML
-   */
-  function arrayToXml($data, $rootNodeName = 'data', $xml=null) {
-    if ($xml == null) {
-      $xml = simplexml_load_string("<?xml version='1.0' encoding='utf-8'?><$rootNodeName />");
+  
+  function http_query_to_array($query){
+  	$result = urldecode($query);
+    $response_string = explode('&', ($result));
+    $response = array();
+    foreach($response_string as $key => $param) {
+      list($key, $value) = explode('=', $param);
+      $r[$key] = $value;
     }
-     
-    foreach($data as $key => $value) {
-      if (is_numeric($key)) {
-        // make string key...
-        $key = "unknownNode_". (string) $key;
-      }
-
-      // replace anything not alpha numeric
-      $element = preg_replace('/[^a-z]/i', '', $key);
-         
-      // if there is another array found recrusively call this function
-      if (is_array($value)) {
-        $node = $xml->addChild($element);
-        if (isset($value['_c'])) { 
-          $this->arrayToXml($value['_c'], $rootNodeName, $node);
-        }
-        else {
-          // recrusive call.
-          $this->arrayToXml($value, $rootNodeName, $node);
-        }
-        if (isset($value['_a'])) {
-          foreach ($value['_a'] as $at => $av) {
-            $node->addAttribute($at, $av);
-          }
-        }
-      }
-      else {
-        // add single node.
-        $value = htmlentities($value);
-        $xml->addChild($key,$value);
-      }
-    }
-    // pass back as string. or simple xml object if you want!
-    return $xml->asXML();
+    return $r;
   }
 
 }
