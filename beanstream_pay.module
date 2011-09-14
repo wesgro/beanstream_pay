@@ -1,0 +1,16 @@
+<?php
+
+/**
+ * Implements hook_pay_method_handler_info().
+ */
+function beanstream_pay_pay_method_handler_info() {
+  return array(
+    'pay_method_gateway_beanstream_pay' => array(
+      'title' => t('Beanstream'),
+      'description' => t('Payment processing using the Beanstream payment gateway'),
+      'parent' => 'pay_method_gateway',
+      'module' => 'pay',
+      'path' => drupal_get_path('module', 'beanstream_pay') .'/includes/handlers',
+    ),
+  );
+}
