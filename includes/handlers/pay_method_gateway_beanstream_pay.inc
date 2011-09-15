@@ -55,7 +55,7 @@ class pay_method_gateway_beanstream_pay extends pay_method_gateway {
     foreach ($this->gateway_request_values($txntype) as $key => $val) {
       if ($val = trim($val)) $req .= check_plain($key) .'='. urlencode($val) .'&';
     }
-   //	krumo($req); 
+   	//krumo($req); exit;
     
     return $req;
   }
@@ -186,7 +186,7 @@ class pay_method_gateway_beanstream_pay extends pay_method_gateway {
     $data = array(
       'requestType'           => 'BACKEND',
       'trnType'               => 'P',
-      'trnComments'           => $this->note,
+      'trnComments'           => $this->billto['notes'],
       'username'              => $this->beanstream_pay_user,
       'password'              => $this->beanstream_pay_password,
       'merchant_id'           => $this->beanstream_pay_api_id,
