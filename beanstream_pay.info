@@ -2,7 +2,6 @@ name = Beanstream Pay
 description = Support for the beanstream payment gateway.
 package = Payment API
 dependencies[] = pay
-dependencies[] = webform_pay
 core = 6.x
 
 ; Information added by drupal.org packaging script on 2011-03-06
